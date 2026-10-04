@@ -11,21 +11,17 @@
     "System Support",
     "IT Technician"
   ],
-
   "locations": [
     "India",
     "Remote"
   ],
-
-  "minimum_match": 70,
-
+  "minimum_match": 35,
   "experience": [
     "Fresher",
     "Entry Level",
     "0-1 years",
     "1-2 years"
   ],
-
   "employment_type": [
     "Full-time"
   ]
