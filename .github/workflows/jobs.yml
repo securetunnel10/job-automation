@@ -1,33 +1,374 @@
-name: Job Automation
+import json
+import os
+import requests
+from matcher import match_score
 
-on:
-  workflow_dispatch:
 
-  schedule:
-    - cron: "30 3 * * *"
+# ============================================================
+# LOAD CONFIG
+# ============================================================
 
-jobs:
+with open("config.json", "r", encoding="utf-8") as file:
+    config = json.load(file)
 
-  job-search:
 
-    runs-on: ubuntu-latest
+# ============================================================
+# JOOBLE API KEY
+# GitHub Secret se automatically milegi
+# Secret name: JOOBLE_API_KEY
+# ============================================================
 
-    steps:
+API_KEY = os.environ.get("JOOBLE_API_KEY")
 
-      - name: Checkout repository
-        uses: actions/checkout@v6
+if not API_KEY:
+    raise RuntimeError(
+        "ERROR: JOOBLE_API_KEY GitHub Secret nahi mila."
+    )
 
-      - name: Setup Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+# ============================================================
+# SETTINGS
+# ============================================================
 
-      - name: Run job automation
-        env:
-          JOOBLE_API_KEY: "bafcd2f6-18ed-4f21-b1d2-cb06b34e56af"
-        run: |
-          python jobs.py
+MINIMUM_MATCH = config.get("minimum_match", 70)
+
+LOCATION = "India"
+
+KEYWORDS = [
+    "IT Support",
+    "Desktop Support",
+    "Technical Support",
+    "IT Support Executive",
+    "Helpdesk Support",
+    "IT Helpdesk",
+    "Desktop Support Engineer",
+    "Technical Support Engineer",
+    "System Support",
+    "IT Technician"
+]
+
+
+# ============================================================
+# SEARCH JOOBLE
+# ============================================================
+
+def search_jooble(keyword):
+
+    url = f"https://in.jooble.org/api/{API_KEY}"
+
+    payload = {
+        "keywords": keyword,
+        "location": LOCATION,
+        "page": 1,
+        "ResultOnPage": 20,
+        "companysearch": False
+    }
+
+    response = requests.post(
+        url,
+        json=payload,
+        headers={
+            "Content-Type": "application/json"
+        },
+        timeout=30
+    )
+
+    # HTTP error hone par yahin rukega
+    response.raise_for_status()
+
+    return response.json()
+
+
+# ============================================================
+# PROCESS JOBS
+# ============================================================
+
+def process_jobs():
+
+    all_jobs = []
+
+    print("=" * 60)
+    print("JOOBLE JOB SEARCH STARTED")
+    print("=" * 60)
+
+    print()
+    print("Target location:", LOCATION)
+    print("Minimum resume match:", MINIMUM_MATCH, "%")
+    print()
+
+    for keyword in KEYWORDS:
+
+        print("-" * 60)
+        print("Searching:", keyword)
+
+        try:
+
+            data = search_jooble(keyword)
+
+            total_count = data.get("totalCount", 0)
+
+            jobs = data.get("jobs", [])
+
+            print(
+                "Jobs available for this search:",
+                total_count
+            )
+
+            print(
+                "Jobs returned:",
+                len(jobs)
+            )
+
+            for job in jobs:
+
+                title = job.get("title", "")
+                company = job.get("company", "")
+                location = job.get("location", "")
+                salary = job.get("salary", "")
+                source = job.get("source", "")
+                link = job.get("link", "")
+                snippet = job.get("snippet", "")
+                job_type = job.get("type", "")
+                updated = job.get("updated", "")
+
+                # Job ke saare relevant text ko combine karna
+                job_text = (
+                    title + " " +
+                    company + " " +
+                    location + " " +
+                    snippet
+                )
+
+                # Resume keyword matching
+                score, matched_keywords = match_score(
+                    job_text
+                )
+
+                # Minimum match check
+                if score >= MINIMUM_MATCH:
+
+                    all_jobs.append({
+
+                        "title": title,
+
+                        "company": company,
+
+                        "location": location,
+
+                        "salary": salary,
+
+                        "source": source,
+
+                        "type": job_type,
+
+                        "updated": updated,
+
+                        "url": link,
+
+                        "match_score": score,
+
+                        "matched_keywords":
+                            matched_keywords
+
+                    })
+
+        except requests.exceptions.HTTPError as error:
+
+            print(
+                "Jooble API HTTP ERROR:",
+                error
+            )
+
+        except requests.exceptions.RequestException as error:
+
+            print(
+                "Jooble connection ERROR:",
+                error
+            )
+
+        except Exception as error:
+
+            print(
+                "Unexpected ERROR:",
+                error
+            )
+
+
+    return all_jobs
+
+
+# ============================================================
+# REMOVE DUPLICATES
+# ============================================================
+
+def remove_duplicates(jobs):
+
+    unique_jobs = {}
+
+    for job in jobs:
+
+        url = job.get("url", "")
+
+        title = job.get("title", "")
+
+        company = job.get("company", "")
+
+        # URL available hai to URL ko unique ID rakho
+        if url:
+
+            unique_id = url
+
+        else:
+
+            unique_id = (
+                title.lower()
+                + "|"
+                + company.lower()
+            )
+
+        if unique_id not in unique_jobs:
+
+            unique_jobs[unique_id] = job
+
+
+    return list(unique_jobs.values())
+
+
+# ============================================================
+# DISPLAY RESULTS
+# ============================================================
+
+def display_jobs(jobs):
+
+    print()
+    print("=" * 60)
+    print(
+        "MATCHING JOBS FOUND:",
+        len(jobs)
+    )
+    print("=" * 60)
+
+    if not jobs:
+
+        print()
+        print(
+            "Koi job minimum match score ke upar nahi mili."
+        )
+
+        return
+
+
+    # Highest match first
+    jobs.sort(
+        key=lambda x: x.get(
+            "match_score",
+            0
+        ),
+        reverse=True
+    )
+
+
+    for number, job in enumerate(
+        jobs,
+        start=1
+    ):
+
+        print()
+        print(
+            f"JOB #{number}"
+        )
+
+        print(
+            "Title:",
+            job.get("title", "")
+        )
+
+        print(
+            "Company:",
+            job.get("company", "")
+        )
+
+        print(
+            "Location:",
+            job.get("location", "")
+        )
+
+        print(
+            "Salary:",
+            job.get("salary", "")
+        )
+
+        print(
+            "Job Type:",
+            job.get("type", "")
+        )
+
+        print(
+            "Source:",
+            job.get("source", "")
+        )
+
+        print(
+            "Match:",
+            job.get("match_score", 0),
+            "%"
+        )
+
+        print(
+            "Matched Skills:",
+            ", ".join(
+                job.get(
+                    "matched_keywords",
+                    []
+                )
+            )
+        )
+
+        print(
+            "Apply Link:",
+            job.get("url", "")
+        )
+
+        print("-" * 60)
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    print()
+    print("JOB AUTOMATION STARTED")
+    print()
+
+    jobs = process_jobs()
+
+    print()
+    print(
+        "Total jobs before duplicate removal:",
+        len(jobs)
+    )
+
+    jobs = remove_duplicates(jobs)
+
+    print(
+        "Total jobs after duplicate removal:",
+        len(jobs)
+    )
+
+    display_jobs(jobs)
+
+    print()
+    print("=" * 60)
+    print("JOB AUTOMATION FINISHED")
+    print("=" * 60)
+
+
+# ============================================================
+# RUN PROGRAM
+# ============================================================
+
+if __name__ == "__main__":
+
+    main()
