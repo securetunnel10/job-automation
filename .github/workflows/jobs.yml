@@ -27,5 +27,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run job automation
+        env:
+          JOOBLE_API_KEY: "bafcd2f6-18ed-4f21-b1d2-cb06b34e56af"
         run: |
           python jobs.py
