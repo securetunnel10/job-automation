@@ -1,0 +1,32 @@
+{
+  "keywords": [
+    "IT Support",
+    "Desktop Support",
+    "Technical Support",
+    "IT Support Executive",
+    "Helpdesk Support",
+    "IT Helpdesk",
+    "Desktop Support Engineer",
+    "Technical Support Engineer",
+    "System Support",
+    "IT Technician"
+  ],
+
+  "locations": [
+    "India",
+    "Remote"
+  ],
+
+  "minimum_match": 70,
+
+  "experience": [
+    "Fresher",
+    "Entry Level",
+    "0-1 years",
+    "1-2 years"
+  ],
+
+  "employment_type": [
+    "Full-time"
+  ]
+}
