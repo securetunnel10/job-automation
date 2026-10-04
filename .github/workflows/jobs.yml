@@ -3,6 +3,9 @@ name: Job Automation
 on:
   workflow_dispatch:
 
+  schedule:
+    - cron: "30 3 * * *"
+
 jobs:
 
   job-search:
