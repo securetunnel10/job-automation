@@ -5,11 +5,11 @@ on:
   workflow_dispatch:
 
   schedule:
-    - cron: "30 3 * * *"
+    - cron: "0 9 * * *"
       timezone: "Asia/Kolkata"
-    - cron: "30 6 * * *"
+    - cron: "0 12 * * *"
       timezone: "Asia/Kolkata"
-    - cron: "30 10 * * *"
+    - cron: "0 16 * * *"
       timezone: "Asia/Kolkata"
 
 permissions:
@@ -40,7 +40,7 @@ jobs:
         run: |
           python jobs.py
 
-      - name: Send job report to Telegram
+      - name: Send complete formatted job report to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -56,59 +56,95 @@ jobs:
           csv_file = Path("applications.csv")
 
           if not csv_file.exists():
-              raise SystemExit("applications.csv was not created")
+              raise SystemExit("applications.csv not found")
 
           with csv_file.open(
               "r", newline="", encoding="utf-8-sig"
           ) as f:
               jobs = list(csv.DictReader(f))
 
-          jobs = jobs[-10:][::-1]
+          # Latest saved jobs first
+          jobs.reverse()
 
-          lines = [
-              "JOB AUTOMATION REPORT",
-              "Latest 10 tracked jobs",
-              f"Total jobs in tracker: {len(list(csv.DictReader(csv_file.open('r', encoding='utf-8-sig'))))}",
-              ""
-          ]
+          def get_value(job, key, default="N/A"):
+              return (job.get(key) or default).strip()
 
-          if not jobs:
-              lines.append("No jobs found in applications.csv.")
-          else:
-              for i, job in enumerate(jobs, 1):
-                  title = job.get("Job Title", "N/A")
-                  company = job.get("Company", "N/A")
-                  location = job.get("Location", "N/A")
-                  score = job.get("Match Score", "N/A")
-                  status = job.get("Status", "N/A")
-                  link = job.get("Apply Link", "")
+          blocks = []
 
-                  lines.extend([
-                      f"{i}. {title}",
-                      f"Company: {company}",
-                      f"Location: {location}",
-                      f"Match: {score}%",
-                      f"Status: {status}",
-                      f"Apply: {link}",
-                      ""
-                  ])
+          for i, job in enumerate(jobs, 1):
+              title = get_value(job, "Job Title")
+              company = get_value(job, "Company")
+              location = get_value(job, "Location")
+              score = get_value(job, "Match Score", "0")
+              status = get_value(job, "Status")
+              source = get_value(job, "Source")
+              link = get_value(job, "Apply Link", "")
 
-          message = "\n".join(lines)
-          if len(message) > 3900:
-              message = message[:3850] + "\n\nReport shortened. See applications.csv on GitHub."
+              try:
+                  score = f"{float(score):g}%"
+              except (ValueError, TypeError):
+                  score = f"{score}%"
 
-          response = requests.post(
-              f"https://api.telegram.org/bot{token}/sendMessage",
-              json={"chat_id": chat_id, "text": message},
-              timeout=20
+              block = (
+                  f"🔹 {i}. {title}\n"
+                  f"🏢 Company: {company}\n"
+                  f"📍 Location: {location}\n"
+                  f"🎯 Resume Match: {score}\n"
+                  f"🌐 Source: {source}\n"
+                  f"📌 Status: {status}\n"
+                  f"🔗 Apply: {link or 'Link unavailable'}"
+              )
+              blocks.append(block)
+
+          if not blocks:
+              blocks = ["😕 No jobs are currently saved in the tracker."]
+
+          # Split into multiple messages without dropping jobs
+          limit = 3000
+          chunks = []
+          current = ""
+
+          for block in blocks:
+              addition = block + "\n\n━━━━━━━━━━━━━━━━━━\n\n"
+
+              if len(current) + len(addition) > limit and current:
+                  chunks.append(current.rstrip())
+                  current = ""
+
+              current += addition
+
+          if current:
+              chunks.append(current.rstrip())
+
+          total_parts = len(chunks)
+
+          for index, chunk in enumerate(chunks, 1):
+              header = (
+                  "💼 IT JOB ALERTS\n"
+                  "━━━━━━━━━━━━━━━━━━\n"
+                  f"📊 Total tracked jobs: {len(jobs)}\n"
+                  f"📨 Part {index}/{total_parts}\n\n"
+              )
+
+              response = requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={
+                      "chat_id": chat_id,
+                      "text": header + chunk
+                  },
+                  timeout=30
+              )
+              response.raise_for_status()
+
+              if not response.json().get("ok"):
+                  raise SystemExit(
+                      f"Telegram delivery failed on part {index}"
+                  )
+
+          print(
+              f"Telegram report sent: {len(jobs)} jobs "
+              f"in {total_parts} message(s)."
           )
-          response.raise_for_status()
-
-          result = response.json()
-          if not result.get("ok"):
-              raise SystemExit("Telegram API did not confirm message delivery")
-
-          print("Telegram report sent successfully.")
           PY
 
       - name: Save application tracker
