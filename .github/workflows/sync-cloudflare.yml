@@ -1,0 +1,120 @@
+
+name: Sync Jobs to Cloudflare
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 9:45 AM IST
+    - cron: "15 4 * * *"
+    # 12:45 PM IST
+    - cron: "15 7 * * *"
+    # 4:45 PM IST
+    - cron: "15 11 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Send applications.csv to Cloudflare
+        env:
+          WORKER_URL: https://it-job-alerts.imamankr2.workers.dev
+          WORKER_SHARED_SECRET: ${{ secrets.WORKER_SHARED_SECRET }}
+        run: |
+          python - <<'PY'
+          import csv
+          import json
+          import os
+          import sys
+          import urllib.request
+          import urllib.error
+
+          worker_url = os.environ["WORKER_URL"].rstrip("/")
+          secret = os.environ.get("WORKER_SHARED_SECRET", "")
+
+          if not secret:
+              sys.exit("ERROR: GitHub secret WORKER_SHARED_SECRET is missing.")
+
+          csv_file = "applications.csv"
+
+          if not os.path.isfile(csv_file):
+              sys.exit("ERROR: applications.csv was not found.")
+
+          jobs = []
+
+          with open(csv_file, "r", encoding="utf-8-sig", newline="") as f:
+              reader = csv.DictReader(f)
+
+              required = {
+                  "Job Title", "Company", "Location",
+                  "Match Score", "Matched Skills",
+                  "Apply Link", "Source", "Date"
+              }
+
+              missing = required - set(reader.fieldnames or [])
+
+              if missing:
+                  sys.exit(
+                      "ERROR: Missing CSV columns: "
+                      + ", ".join(sorted(missing))
+                  )
+
+              for row in reader:
+                  title = (row.get("Job Title") or "").strip()
+                  link = (row.get("Apply Link") or "").strip()
+
+                  if not title or not link.startswith(("https://", "http://")):
+                      continue
+
+                  jobs.append({
+                      "title": title,
+                      "company": (row.get("Company") or "").strip(),
+                      "location": (row.get("Location") or "").strip(),
+                      "match_score": row.get("Match Score") or 0,
+                      "matched_skills": row.get("Matched Skills") or "",
+                      "apply_link": link,
+                      "source": (row.get("Source") or "Unknown").strip(),
+                      "Date": (row.get("Date") or "").strip()
+                  })
+
+          payload = json.dumps({"jobs": jobs}).encode("utf-8")
+
+          request = urllib.request.Request(
+              worker_url + "/sync",
+              data=payload,
+              headers={
+                  "Content-Type": "application/json",
+                  "Authorization": "Bearer " + secret
+              },
+              method="POST"
+          )
+
+          try:
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  result = json.loads(response.read().decode("utf-8"))
+                  print(json.dumps(result, indent=2))
+
+                  if not result.get("ok"):
+                      sys.exit("ERROR: Cloudflare sync did not succeed.")
+
+          except urllib.error.HTTPError as error:
+              print("Cloudflare HTTP error:", error.code)
+              print(error.read().decode("utf-8", errors="replace"))
+              sys.exit(1)
+
+          except Exception as error:
+              sys.exit("ERROR: " + str(error))
+
+          print(f"CSV jobs submitted: {len(jobs)}")
+          PY
