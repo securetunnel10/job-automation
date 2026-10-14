@@ -1,3 +1,4 @@
+
 name: Job Automation
 
 on:
@@ -5,18 +6,20 @@ on:
 
   schedule:
     - cron: "30 3 * * *"
+      timezone: "Asia/Kolkata"
+    - cron: "30 6 * * *"
+      timezone: "Asia/Kolkata"
+    - cron: "30 10 * * *"
+      timezone: "Asia/Kolkata"
 
 permissions:
   contents: write
 
 jobs:
-
   job-search:
-
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -36,6 +39,77 @@ jobs:
           JOOBLE_API_KEY: ${{ secrets.JOOBLE_API_KEY }}
         run: |
           python jobs.py
+
+      - name: Send job report to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'PY'
+          import csv
+          import os
+          import requests
+          from pathlib import Path
+
+          token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+          csv_file = Path("applications.csv")
+
+          if not csv_file.exists():
+              raise SystemExit("applications.csv was not created")
+
+          with csv_file.open(
+              "r", newline="", encoding="utf-8-sig"
+          ) as f:
+              jobs = list(csv.DictReader(f))
+
+          jobs = jobs[-10:][::-1]
+
+          lines = [
+              "JOB AUTOMATION REPORT",
+              "Latest 10 tracked jobs",
+              f"Total jobs in tracker: {len(list(csv.DictReader(csv_file.open('r', encoding='utf-8-sig'))))}",
+              ""
+          ]
+
+          if not jobs:
+              lines.append("No jobs found in applications.csv.")
+          else:
+              for i, job in enumerate(jobs, 1):
+                  title = job.get("Job Title", "N/A")
+                  company = job.get("Company", "N/A")
+                  location = job.get("Location", "N/A")
+                  score = job.get("Match Score", "N/A")
+                  status = job.get("Status", "N/A")
+                  link = job.get("Apply Link", "")
+
+                  lines.extend([
+                      f"{i}. {title}",
+                      f"Company: {company}",
+                      f"Location: {location}",
+                      f"Match: {score}%",
+                      f"Status: {status}",
+                      f"Apply: {link}",
+                      ""
+                  ])
+
+          message = "\n".join(lines)
+          if len(message) > 3900:
+              message = message[:3850] + "\n\nReport shortened. See applications.csv on GitHub."
+
+          response = requests.post(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              json={"chat_id": chat_id, "text": message},
+              timeout=20
+          )
+          response.raise_for_status()
+
+          result = response.json()
+          if not result.get("ok"):
+              raise SystemExit("Telegram API did not confirm message delivery")
+
+          print("Telegram report sent successfully.")
+          PY
 
       - name: Save application tracker
         run: |
