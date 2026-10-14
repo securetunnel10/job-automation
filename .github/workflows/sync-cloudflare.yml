@@ -4,11 +4,8 @@ name: Sync Jobs to Cloudflare
 on:
   workflow_dispatch:
   schedule:
-    # 9:45 AM IST
     - cron: "15 4 * * *"
-    # 12:45 PM IST
     - cron: "15 7 * * *"
-    # 4:45 PM IST
     - cron: "15 11 * * *"
 
 permissions:
@@ -44,7 +41,7 @@ jobs:
           secret = os.environ.get("WORKER_SHARED_SECRET", "")
 
           if not secret:
-              sys.exit("ERROR: GitHub secret WORKER_SHARED_SECRET is missing.")
+              sys.exit("ERROR: WORKER_SHARED_SECRET GitHub secret is missing.")
 
           csv_file = "applications.csv"
 
@@ -57,9 +54,14 @@ jobs:
               reader = csv.DictReader(f)
 
               required = {
-                  "Job Title", "Company", "Location",
-                  "Match Score", "Matched Skills",
-                  "Apply Link", "Source", "Date"
+                  "Job Title",
+                  "Company",
+                  "Location",
+                  "Match Score",
+                  "Matched Skills",
+                  "Apply Link",
+                  "Source",
+                  "Date"
               }
 
               missing = required - set(reader.fieldnames or [])
@@ -88,33 +90,49 @@ jobs:
                       "Date": (row.get("Date") or "").strip()
                   })
 
-          payload = json.dumps({"jobs": jobs}).encode("utf-8")
+          print("Valid jobs found in CSV:", len(jobs))
+
+          payload = json.dumps(
+              {"jobs": jobs},
+              ensure_ascii=False
+          ).encode("utf-8")
 
           request = urllib.request.Request(
               worker_url + "/sync",
               data=payload,
               headers={
                   "Content-Type": "application/json",
-                  "Authorization": "Bearer " + secret
+                  "Authorization": "Bearer " + secret,
+                  "User-Agent": (
+                      "Mozilla/5.0 (X11; Linux x86_64) "
+                      "AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) "
+                      "Chrome/131.0.0.0 Safari/537.36"
+                  )
               },
               method="POST"
           )
 
           try:
               with urllib.request.urlopen(request, timeout=60) as response:
-                  result = json.loads(response.read().decode("utf-8"))
-                  print(json.dumps(result, indent=2))
+                  response_text = response.read().decode("utf-8")
+                  print("Cloudflare HTTP status:", response.status)
+                  print("Cloudflare response:", response_text)
+
+                  result = json.loads(response_text)
 
                   if not result.get("ok"):
-                      sys.exit("ERROR: Cloudflare sync did not succeed.")
+                      sys.exit("ERROR: Cloudflare sync was unsuccessful.")
 
           except urllib.error.HTTPError as error:
               print("Cloudflare HTTP error:", error.code)
-              print(error.read().decode("utf-8", errors="replace"))
+              print(
+                  error.read().decode("utf-8", errors="replace")[:3000]
+              )
               sys.exit(1)
 
           except Exception as error:
               sys.exit("ERROR: " + str(error))
 
-          print(f"CSV jobs submitted: {len(jobs)}")
+          print("Cloudflare sync completed successfully.")
           PY
